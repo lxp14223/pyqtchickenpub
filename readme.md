@@ -5,6 +5,12 @@
 PS D:\code\git\pyqtchicken> git config --global --unset http.proxy
 PS D:\code\git\pyqtchicken> git config --global --unset https.proxy
 
+80%都是代理没有设置好，开启了梯子，但是git工具没有设置相关的代理
+导致git其实并没有走代理，一般输入以下命令设置代理即可
+
+git config --global http.proxy 127.0.0.1:7890
+git config --global https.proxy 127.0.0.1:7890
+
 # 文件列表
 
 ###########目录结构描述
