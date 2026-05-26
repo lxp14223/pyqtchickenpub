@@ -21,6 +21,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
     PCA_ENDPOINT_REGION_RATIO = 0.15
     # ENDPOINT_METHOD = "skeleton"
     ENDPOINT_METHOD = "pca"
+    CONF_THRESHOLD = 0.5
 
     def __init__(self):
         super().__init__()
@@ -175,7 +176,8 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         if self.model is None:
             return frame, "模型未加载"
 
-        results = self.model(frame)[0]
+        # results = self.model(frame)[0]
+        results = self.model(frame, conf=self.CONF_THRESHOLD)[0]
         plotted = results.plot()
         segment_text = self._extract_target_segments(results)
         plotted = self._draw_target_points(plotted, results)
