@@ -20,7 +20,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
     PCA_AXIS_OPTIMIZED_COLOR = (255, 255, 0)
     PCA_ENDPOINT_REGION_RATIO = 0.15
     ENDPOINT_METHOD = "pca"
-    CONF_THRESHOLD = 0.5
+    CONF_THRESHOLD = 0.25
     INFERENCE_IMAGE_SIZE = 1280
 
     def __init__(self):
@@ -32,6 +32,8 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         self.current_path = ""
         self.camera = UsbCamera()
         self.latest_camera_frame = None
+        self.left_display_frame = None
+        self.right_display_frame = None
         self.flip_mode = self.ui.comboFlip.currentData()
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._read_camera_frame)
@@ -100,6 +102,8 @@ class DetectPageWindow(QtWidgets.QMainWindow):
             self.stop_camera()
             self.current_path = ""
             self.ui.labelPath.setText("未选择文件")
+            self.left_display_frame = None
+            self.right_display_frame = None
             self._set_placeholder(self.ui.leftPanel, "左侧原图 / 摄像头预览")
 
     def _on_camera_index_changed(self):
@@ -109,7 +113,9 @@ class DetectPageWindow(QtWidgets.QMainWindow):
     def _on_flip_changed(self):
         self.flip_mode = self.ui.comboFlip.currentData()
         if self.latest_camera_frame is not None and self.ui.radioCamera.isChecked():
-            self._show_frame(self.latest_camera_frame, self._panel_label(self.ui.leftPanel))
+            preview = self._apply_flip(self.latest_camera_frame.copy())
+            self.left_display_frame = preview.copy()
+            self._show_frame(preview, self._panel_label(self.ui.leftPanel))
 
     def open_source(self):
         if self.ui.radioImage.isChecked():
@@ -131,10 +137,12 @@ class DetectPageWindow(QtWidgets.QMainWindow):
 
         self.current_path = path
         self.ui.labelPath.setText(path)
-        self._show_frame(img, self._panel_label(self.ui.leftPanel))
+        self.left_display_frame = img.copy()
+        self._show_frame(self.left_display_frame, self._panel_label(self.ui.leftPanel))
 
         result_img, segment_text = self._infer(img)
-        self._show_frame(result_img, self._panel_label(self.ui.rightPanel))
+        self.right_display_frame = result_img.copy()
+        self._show_frame(self.right_display_frame, self._panel_label(self.ui.rightPanel))
         self.ui.textCoords.setPlainText(segment_text)
         self.ui.statusBar.showMessage("图片检测完成", 3000)
 
@@ -150,6 +158,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         self.current_path = f"USB 摄像头 {camera_index}"
         self.ui.labelPath.setText(self.current_path)
         self.latest_camera_frame = None
+        self.left_display_frame = None
         self.timer.start(33)
         self.ui.statusBar.showMessage(
             f"摄像头 {camera_index} 已连接，点击拍照检测", 5000
@@ -163,9 +172,10 @@ class DetectPageWindow(QtWidgets.QMainWindow):
             self._set_placeholder(self.ui.leftPanel, "左侧原图 / 摄像头预览")
             return
 
-        frame = self._apply_flip(frame)
         self.latest_camera_frame = frame.copy()
-        self._show_frame(frame, self._panel_label(self.ui.leftPanel))
+        preview = self._apply_flip(frame)
+        self.left_display_frame = preview.copy()
+        self._show_frame(preview, self._panel_label(self.ui.leftPanel))
 
     def capture_and_detect(self):
         if not self.ui.radioCamera.isChecked():
@@ -176,10 +186,12 @@ class DetectPageWindow(QtWidgets.QMainWindow):
             self.ui.statusBar.showMessage("当前没有可用的摄像头画面", 3000)
             return
 
-        captured = self.latest_camera_frame.copy()
+        captured = self._apply_flip(self.latest_camera_frame.copy())
         result_img, segment_text = self._infer(captured)
-        self._show_frame(captured, self._panel_label(self.ui.leftPanel))
-        self._show_frame(result_img, self._panel_label(self.ui.rightPanel))
+        self.left_display_frame = captured.copy()
+        self.right_display_frame = result_img.copy()
+        self._show_frame(self.left_display_frame, self._panel_label(self.ui.leftPanel))
+        self._show_frame(self.right_display_frame, self._panel_label(self.ui.rightPanel))
         self.ui.textCoords.setPlainText(segment_text)
         self.ui.statusBar.showMessage("拍照检测完成", 3000)
 
@@ -349,6 +361,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
             f"{class_name} #{object_index} optimized axis p1: {endpoint_result['optimized_p1']}",
             f"{class_name} #{object_index} optimized axis p2: {endpoint_result['optimized_p2']}",
             f"{class_name} #{object_index} center: {endpoint_result['center_pt']}",
+            f"{class_name} #{object_index} inliers: {endpoint_result.get('inlier_count', 0)}/{endpoint_result.get('point_count', 0)}",
         ]
 
     def _extract_target_segments(self, results):
@@ -407,6 +420,13 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         )
         label.setPixmap(pixmap)
         label.setText("")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.left_display_frame is not None:
+            self._show_frame(self.left_display_frame, self._panel_label(self.ui.leftPanel))
+        if self.right_display_frame is not None:
+            self._show_frame(self.right_display_frame, self._panel_label(self.ui.rightPanel))
 
     def closeEvent(self, event):
         self.stop_camera()

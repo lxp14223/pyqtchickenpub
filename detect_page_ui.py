@@ -4,16 +4,18 @@ from PySide6 import QtCore, QtWidgets
 class Ui_DetectPage(object):
     def setupUi(self, MainWindow):
         MainWindow.resize(1320, 900)
+        MainWindow.setMinimumSize(980, 680)
         MainWindow.setWindowTitle("检测页面")
 
         self.centralwidget = QtWidgets.QWidget(MainWindow)
         MainWindow.setCentralWidget(self.centralwidget)
 
-        rootLayout = QtWidgets.QVBoxLayout(self.centralwidget)
-        rootLayout.setContentsMargins(16, 16, 16, 16)
-        rootLayout.setSpacing(12)
+        root_layout = QtWidgets.QVBoxLayout(self.centralwidget)
+        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setSpacing(12)
 
-        topBar = QtWidgets.QHBoxLayout()
+        top_bar = QtWidgets.QHBoxLayout()
+        top_bar.setSpacing(10)
 
         self.btnOpen = QtWidgets.QPushButton("选择文件")
         self.btnCapture = QtWidgets.QPushButton("拍照检测")
@@ -54,49 +56,59 @@ class Ui_DetectPage(object):
         self.labelMode = QtWidgets.QLabel("当前模式: 图片")
         self.labelPath = QtWidgets.QLabel("未选择文件")
         self.labelPath.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.labelPath.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Preferred,
+        )
 
-        topBar.addWidget(self.btnOpen)
-        topBar.addWidget(self.btnCapture)
-        topBar.addWidget(self.btnStop)
-        topBar.addSpacing(12)
-        topBar.addWidget(QtWidgets.QLabel("模型:"))
-        topBar.addWidget(self.comboModel)
-        topBar.addSpacing(12)
-        topBar.addWidget(self.radioImage)
-        topBar.addWidget(self.radioCamera)
-        topBar.addSpacing(12)
-        topBar.addWidget(QtWidgets.QLabel("摄像头:"))
-        topBar.addWidget(self.comboCamera)
-        topBar.addWidget(QtWidgets.QLabel("翻转:"))
-        topBar.addWidget(self.comboFlip)
-        topBar.addSpacing(16)
-        topBar.addWidget(self.labelMode)
-        topBar.addStretch(1)
-        topBar.addWidget(self.labelPath, 2)
-        rootLayout.addLayout(topBar)
-
-        content = QtWidgets.QHBoxLayout()
-        content.setSpacing(14)
+        top_bar.addWidget(self.btnOpen)
+        top_bar.addWidget(self.btnCapture)
+        top_bar.addWidget(self.btnStop)
+        top_bar.addSpacing(10)
+        top_bar.addWidget(QtWidgets.QLabel("模型:"))
+        top_bar.addWidget(self.comboModel)
+        top_bar.addSpacing(10)
+        top_bar.addWidget(self.radioImage)
+        top_bar.addWidget(self.radioCamera)
+        top_bar.addSpacing(10)
+        top_bar.addWidget(QtWidgets.QLabel("摄像头:"))
+        top_bar.addWidget(self.comboCamera)
+        top_bar.addWidget(QtWidgets.QLabel("翻转:"))
+        top_bar.addWidget(self.comboFlip)
+        top_bar.addSpacing(12)
+        top_bar.addWidget(self.labelMode)
+        top_bar.addStretch(1)
+        top_bar.addWidget(self.labelPath, 2)
+        root_layout.addLayout(top_bar)
 
         self.leftPanel = self._build_image_panel("左侧原图 / 摄像头预览")
         self.rightPanel = self._build_image_panel("右侧检测结果")
 
-        content.addWidget(self.leftPanel, 1)
-        content.addWidget(self.rightPanel, 1)
-        rootLayout.addLayout(content, 1)
+        self.contentSplitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.contentSplitter.setChildrenCollapsible(False)
+        self.contentSplitter.addWidget(self.leftPanel)
+        self.contentSplitter.addWidget(self.rightPanel)
+        self.contentSplitter.setStretchFactor(0, 1)
+        self.contentSplitter.setStretchFactor(1, 1)
 
-        coordBox = QtWidgets.QGroupBox("chicken 分割坐标")
-        coordLayout = QtWidgets.QVBoxLayout(coordBox)
-        coordLayout.setContentsMargins(12, 18, 12, 12)
+        coord_box = QtWidgets.QGroupBox("chicken 分割坐标")
+        coord_layout = QtWidgets.QVBoxLayout(coord_box)
+        coord_layout.setContentsMargins(12, 18, 12, 12)
 
         self.textCoords = QtWidgets.QPlainTextEdit()
         self.textCoords.setReadOnly(True)
         self.textCoords.setPlaceholderText(
             "拍照或图片检测完成后，这里会显示 chicken 的分割轮廓坐标和端点信息。"
         )
-        coordLayout.addWidget(self.textCoords)
+        coord_layout.addWidget(self.textCoords)
 
-        rootLayout.addWidget(coordBox, 0)
+        self.mainSplitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.mainSplitter.setChildrenCollapsible(False)
+        self.mainSplitter.addWidget(self.contentSplitter)
+        self.mainSplitter.addWidget(coord_box)
+        self.mainSplitter.setStretchFactor(0, 5)
+        self.mainSplitter.setStretchFactor(1, 2)
+        root_layout.addWidget(self.mainSplitter, 1)
 
         self.statusBar = QtWidgets.QStatusBar(MainWindow)
         MainWindow.setStatusBar(self.statusBar)
@@ -115,7 +127,11 @@ class Ui_DetectPage(object):
 
         label = QtWidgets.QLabel("等待加载")
         label.setAlignment(QtCore.Qt.AlignCenter)
-        label.setMinimumSize(560, 520)
+        label.setMinimumSize(320, 240)
+        label.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Expanding,
+        )
         label.setStyleSheet(
             "QLabel {"
             "border: 2px dashed #6b7280;"
@@ -180,6 +196,15 @@ class Ui_DetectPage(object):
             QStatusBar {
                 background: #111827;
                 color: #9ca3af;
+            }
+            QSplitter::handle {
+                background: #1e293b;
+            }
+            QSplitter::handle:horizontal {
+                width: 8px;
+            }
+            QSplitter::handle:vertical {
+                height: 8px;
             }
             """
         )
