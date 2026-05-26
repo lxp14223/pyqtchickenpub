@@ -20,6 +20,8 @@ class UsbCamera:
         for backend in backends:
             cap = cv2.VideoCapture(self.camera_index, backend)
             if cap is not None and cap.isOpened():
+                # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1280)
                 self.cap = cap
                 return True
             if cap is not None:

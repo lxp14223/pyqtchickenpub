@@ -44,6 +44,13 @@ class Ui_DetectPage(object):
             self.comboCamera.addItem(f"USB 摄像头 {index}", index)
         self.comboCamera.setMinimumWidth(140)
 
+        self.comboFlip = QtWidgets.QComboBox()
+        self.comboFlip.addItem("不翻转", "none")
+        self.comboFlip.addItem("水平翻转", "horizontal")
+        self.comboFlip.addItem("垂直翻转", "vertical")
+        self.comboFlip.addItem("水平+垂直", "both")
+        self.comboFlip.setMinimumWidth(120)
+
         self.labelMode = QtWidgets.QLabel("当前模式: 图片")
         self.labelPath = QtWidgets.QLabel("未选择文件")
         self.labelPath.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
@@ -60,6 +67,8 @@ class Ui_DetectPage(object):
         topBar.addSpacing(12)
         topBar.addWidget(QtWidgets.QLabel("摄像头:"))
         topBar.addWidget(self.comboCamera)
+        topBar.addWidget(QtWidgets.QLabel("翻转:"))
+        topBar.addWidget(self.comboFlip)
         topBar.addSpacing(16)
         topBar.addWidget(self.labelMode)
         topBar.addStretch(1)
@@ -82,7 +91,9 @@ class Ui_DetectPage(object):
 
         self.textCoords = QtWidgets.QPlainTextEdit()
         self.textCoords.setReadOnly(True)
-        self.textCoords.setPlaceholderText("拍照或图片检测完成后，这里会显示 chicken 的分割轮廓坐标和端点信息。")
+        self.textCoords.setPlaceholderText(
+            "拍照或图片检测完成后，这里会显示 chicken 的分割轮廓坐标和端点信息。"
+        )
         coordLayout.addWidget(self.textCoords)
 
         rootLayout.addWidget(coordBox, 0)

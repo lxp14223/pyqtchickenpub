@@ -19,9 +19,9 @@ class DetectPageWindow(QtWidgets.QMainWindow):
     PCA_AXIS_ORIGINAL_COLOR = (0, 255, 255)
     PCA_AXIS_OPTIMIZED_COLOR = (255, 255, 0)
     PCA_ENDPOINT_REGION_RATIO = 0.15
-    # ENDPOINT_METHOD = "skeleton"
     ENDPOINT_METHOD = "pca"
     CONF_THRESHOLD = 0.5
+    INFERENCE_IMAGE_SIZE = 1280
 
     def __init__(self):
         super().__init__()
@@ -32,6 +32,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         self.current_path = ""
         self.camera = UsbCamera()
         self.latest_camera_frame = None
+        self.flip_mode = self.ui.comboFlip.currentData()
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._read_camera_frame)
 
@@ -42,6 +43,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         self.ui.radioCamera.toggled.connect(self._on_mode_changed)
         self.ui.comboModel.currentIndexChanged.connect(self.load_model)
         self.ui.comboCamera.currentIndexChanged.connect(self._on_camera_index_changed)
+        self.ui.comboFlip.currentIndexChanged.connect(self._on_flip_changed)
 
         self._set_placeholder(self.ui.leftPanel, "左侧原图 / 摄像头预览")
         self._set_placeholder(self.ui.rightPanel, "右侧检测结果")
@@ -81,6 +83,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
     def _sync_controls(self):
         camera_mode = self.ui.radioCamera.isChecked()
         self.ui.comboCamera.setEnabled(camera_mode)
+        self.ui.comboFlip.setEnabled(camera_mode)
         self.ui.btnCapture.setEnabled(camera_mode)
 
     def update_mode_label(self):
@@ -102,6 +105,11 @@ class DetectPageWindow(QtWidgets.QMainWindow):
     def _on_camera_index_changed(self):
         if self.ui.radioCamera.isChecked():
             self.open_camera()
+
+    def _on_flip_changed(self):
+        self.flip_mode = self.ui.comboFlip.currentData()
+        if self.latest_camera_frame is not None and self.ui.radioCamera.isChecked():
+            self._show_frame(self.latest_camera_frame, self._panel_label(self.ui.leftPanel))
 
     def open_source(self):
         if self.ui.radioImage.isChecked():
@@ -143,7 +151,9 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         self.ui.labelPath.setText(self.current_path)
         self.latest_camera_frame = None
         self.timer.start(33)
-        self.ui.statusBar.showMessage(f"摄像头 {camera_index} 已连接，点击拍照检测", 5000)
+        self.ui.statusBar.showMessage(
+            f"摄像头 {camera_index} 已连接，点击拍照检测", 5000
+        )
 
     def _read_camera_frame(self):
         ok, frame = self.camera.read()
@@ -153,6 +163,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
             self._set_placeholder(self.ui.leftPanel, "左侧原图 / 摄像头预览")
             return
 
+        frame = self._apply_flip(frame)
         self.latest_camera_frame = frame.copy()
         self._show_frame(frame, self._panel_label(self.ui.leftPanel))
 
@@ -172,12 +183,24 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         self.ui.textCoords.setPlainText(segment_text)
         self.ui.statusBar.showMessage("拍照检测完成", 3000)
 
+    def _apply_flip(self, frame):
+        if self.flip_mode == "horizontal":
+            return cv2.flip(frame, 1)
+        if self.flip_mode == "vertical":
+            return cv2.flip(frame, 0)
+        if self.flip_mode == "both":
+            return cv2.flip(frame, -1)
+        return frame
+
     def _infer(self, frame):
         if self.model is None:
             return frame, "模型未加载"
 
-        # results = self.model(frame)[0]
-        results = self.model(frame, conf=self.CONF_THRESHOLD)[0]
+        results = self.model(
+            frame,
+            conf=self.CONF_THRESHOLD,
+            imgsz=self.INFERENCE_IMAGE_SIZE,
+        )[0]
         plotted = results.plot()
         segment_text = self._extract_target_segments(results)
         plotted = self._draw_target_points(plotted, results)
