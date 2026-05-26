@@ -9,12 +9,13 @@ from ultralytics import YOLO
 from detect_page_ui import Ui_DetectPage
 from pca_axis_utils import compute_major_axis_comparison
 from skeleton_endpoint_utils import compute_skeleton_farthest_endpoints
+from usb_camera import UsbCamera
 
 os.environ["YOLO_VERBOSE"] = "False"
 
 
 class DetectPageWindow(QtWidgets.QMainWindow):
-    SEGMENT_TARGETS = ("banana", "spoon")
+    SEGMENT_TARGETS = ("chicken",)
     PCA_AXIS_ORIGINAL_COLOR = (0, 255, 255)
     PCA_AXIS_OPTIMIZED_COLOR = (255, 255, 0)
     PCA_ENDPOINT_REGION_RATIO = 0.15
@@ -28,20 +29,24 @@ class DetectPageWindow(QtWidgets.QMainWindow):
 
         self.model = None
         self.current_path = ""
-        self.cap = None
+        self.camera = UsbCamera()
+        self.latest_camera_frame = None
         self.timer = QtCore.QTimer(self)
-        self.timer.timeout.connect(self._read_video_frame)
+        self.timer.timeout.connect(self._read_camera_frame)
 
-        self.ui.btnOpen.clicked.connect(self.open_file)
-        self.ui.btnStop.clicked.connect(self.stop_playback)
-        self.ui.radioImage.toggled.connect(self.update_mode_label)
-        self.ui.radioVideo.toggled.connect(self.update_mode_label)
+        self.ui.btnOpen.clicked.connect(self.open_source)
+        self.ui.btnCapture.clicked.connect(self.capture_and_detect)
+        self.ui.btnStop.clicked.connect(self.stop_camera)
+        self.ui.radioImage.toggled.connect(self._on_mode_changed)
+        self.ui.radioCamera.toggled.connect(self._on_mode_changed)
         self.ui.comboModel.currentIndexChanged.connect(self.load_model)
+        self.ui.comboCamera.currentIndexChanged.connect(self._on_camera_index_changed)
 
-        self._set_placeholder(self.ui.leftPanel, "左侧原图")
+        self._set_placeholder(self.ui.leftPanel, "左侧原图 / 摄像头预览")
         self._set_placeholder(self.ui.rightPanel, "右侧检测结果")
         self.update_mode_label()
         self.load_model()
+        self._sync_controls()
 
     def load_model(self):
         path = self.ui.comboModel.currentText().strip()
@@ -51,7 +56,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         if os.path.exists(path):
             try:
                 self.model = YOLO(path)
-                self.ui.statusBar.showMessage(f"已加载模型: {path}")
+                self.ui.statusBar.showMessage(f"模型加载完成: {path}", 3000)
                 return
             except Exception as exc:
                 QtWidgets.QMessageBox.critical(self, "模型加载失败", str(exc))
@@ -60,7 +65,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.critical(
             self,
             "模型未找到",
-            "没有找到可加载的 YOLO 模型文件。\n请把权重放到 rknn/ 目录。",
+            "没有找到可加载的 YOLO 模型文件，请检查 rknn/ 目录。",
         )
         raise FileNotFoundError("YOLO model not found")
 
@@ -72,27 +77,44 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         label.setText(text + "\n等待加载")
         label.setPixmap(QtGui.QPixmap())
 
+    def _sync_controls(self):
+        camera_mode = self.ui.radioCamera.isChecked()
+        self.ui.comboCamera.setEnabled(camera_mode)
+        self.ui.btnCapture.setEnabled(camera_mode)
+
     def update_mode_label(self):
-        mode = "图片" if self.ui.radioImage.isChecked() else "视频"
+        mode = "图片" if self.ui.radioImage.isChecked() else "摄像头"
         method = self.ENDPOINT_METHOD.upper()
         self.ui.labelMode.setText(f"当前模式: {mode} | 端点方法: {method}")
 
-    def open_file(self):
+    def _on_mode_changed(self):
+        self.update_mode_label()
+        self._sync_controls()
+        if self.ui.radioCamera.isChecked():
+            self.open_source()
+        else:
+            self.stop_camera()
+            self.current_path = ""
+            self.ui.labelPath.setText("未选择文件")
+            self._set_placeholder(self.ui.leftPanel, "左侧原图 / 摄像头预览")
+
+    def _on_camera_index_changed(self):
+        if self.ui.radioCamera.isChecked():
+            self.open_camera()
+
+    def open_source(self):
         if self.ui.radioImage.isChecked():
             path, _ = QtWidgets.QFileDialog.getOpenFileName(
                 self, "选择图片", "", "Images (*.png *.jpg *.jpeg *.bmp)"
             )
             if path:
                 self.load_image(path)
-        else:
-            path, _ = QtWidgets.QFileDialog.getOpenFileName(
-                self, "选择视频", "", "Videos (*.mp4 *.avi *.mov *.mkv)"
-            )
-            if path:
-                self.load_video(path)
+            return
+
+        self.open_camera()
 
     def load_image(self, path):
-        self.stop_playback()
+        self.stop_camera()
         img = cv2.imread(path)
         if img is None:
             self.ui.statusBar.showMessage("图片读取失败", 3000)
@@ -102,37 +124,52 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         self.ui.labelPath.setText(path)
         self._show_frame(img, self._panel_label(self.ui.leftPanel))
 
-        result_img, banana_text = self._infer(img)
+        result_img, segment_text = self._infer(img)
         self._show_frame(result_img, self._panel_label(self.ui.rightPanel))
-        self.ui.textCoords.setPlainText(banana_text)
+        self.ui.textCoords.setPlainText(segment_text)
         self.ui.statusBar.showMessage("图片检测完成", 3000)
 
-    def load_video(self, path):
-        self.stop_playback()
-        self.cap = cv2.VideoCapture(path)
-        if not self.cap.isOpened():
-            self.ui.statusBar.showMessage("视频打开失败", 3000)
+    def open_camera(self):
+        camera_index = self.ui.comboCamera.currentData()
+        self.stop_camera(clear_result=False)
+
+        if not self.camera.open(camera_index):
+            self.ui.statusBar.showMessage(f"摄像头 {camera_index} 打开失败", 5000)
+            self._set_placeholder(self.ui.leftPanel, "左侧原图 / 摄像头预览")
             return
 
-        self.current_path = path
-        self.ui.labelPath.setText(path)
+        self.current_path = f"USB 摄像头 {camera_index}"
+        self.ui.labelPath.setText(self.current_path)
+        self.latest_camera_frame = None
         self.timer.start(33)
-        self.ui.statusBar.showMessage("视频检测中")
+        self.ui.statusBar.showMessage(f"摄像头 {camera_index} 已连接，点击拍照检测", 5000)
 
-    def _read_video_frame(self):
-        if not self.cap:
+    def _read_camera_frame(self):
+        ok, frame = self.camera.read()
+        if not ok or frame is None:
+            self.stop_camera(clear_result=False)
+            self.ui.statusBar.showMessage("摄像头读取失败，已停止预览", 5000)
+            self._set_placeholder(self.ui.leftPanel, "左侧原图 / 摄像头预览")
             return
 
-        ok, frame = self.cap.read()
-        if not ok:
-            self.stop_playback()
-            self.ui.statusBar.showMessage("视频播放结束", 3000)
-            return
-
+        self.latest_camera_frame = frame.copy()
         self._show_frame(frame, self._panel_label(self.ui.leftPanel))
-        result_img, banana_text = self._infer(frame)
+
+    def capture_and_detect(self):
+        if not self.ui.radioCamera.isChecked():
+            self.ui.statusBar.showMessage("请先切换到摄像头模式", 3000)
+            return
+
+        if self.latest_camera_frame is None:
+            self.ui.statusBar.showMessage("当前没有可用的摄像头画面", 3000)
+            return
+
+        captured = self.latest_camera_frame.copy()
+        result_img, segment_text = self._infer(captured)
+        self._show_frame(captured, self._panel_label(self.ui.leftPanel))
         self._show_frame(result_img, self._panel_label(self.ui.rightPanel))
-        self.ui.textCoords.setPlainText(banana_text)
+        self.ui.textCoords.setPlainText(segment_text)
+        self.ui.statusBar.showMessage("拍照检测完成", 3000)
 
     def _infer(self, frame):
         if self.model is None:
@@ -140,7 +177,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
 
         results = self.model(frame)[0]
         plotted = results.plot()
-        segment_text = self._extract_banana_segments(results)
+        segment_text = self._extract_target_segments(results)
         plotted = self._draw_target_points(plotted, results)
         plotted, endpoint_text = self._draw_target_axis(plotted, results)
         if endpoint_text:
@@ -289,9 +326,9 @@ class DetectPageWindow(QtWidgets.QMainWindow):
             f"{class_name} #{object_index} center: {endpoint_result['center_pt']}",
         ]
 
-    def _extract_banana_segments(self, results):
+    def _extract_target_segments(self, results):
         if results.masks is None or results.boxes is None:
-            return "未检测到 banana / spoon 分割结果"
+            return "未检测到 chicken 分割结果"
 
         names = results.names
         lines = []
@@ -320,17 +357,17 @@ class DetectPageWindow(QtWidgets.QMainWindow):
             object_indices[class_name] += 1
 
         if not lines:
-            return "未检测到 banana / spoon 分割结果"
+            return "未检测到 chicken 分割结果"
 
         return "\n".join(lines).strip()
 
-    def stop_playback(self):
+    def stop_camera(self, clear_result=True):
         if self.timer.isActive():
             self.timer.stop()
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
-        self.ui.textCoords.clear()
+        self.camera.release()
+        self.latest_camera_frame = None
+        if clear_result:
+            self.ui.textCoords.clear()
 
     def _show_frame(self, frame, label):
         if frame is None:
@@ -347,7 +384,7 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         label.setText("")
 
     def closeEvent(self, event):
-        self.stop_playback()
+        self.stop_camera()
         super().closeEvent(event)
 
 

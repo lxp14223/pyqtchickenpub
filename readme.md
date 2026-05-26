@@ -17,3 +17,8 @@ PS D:\code\git\pyqtchicken> git config --global --unset https.proxy
 ├── pca_axis_utils.py //pca方法  
 ├── skeleton_endpoint_utils.py //骨架方法  
 └── tools
+
+###########V1.0.0 版本内容更新
+
+1. 新功能
+2. 添加pca 骨架算法
