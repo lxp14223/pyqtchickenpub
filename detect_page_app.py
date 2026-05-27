@@ -224,56 +224,18 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         return plotted, segment_text
 
     def _draw_target_points(self, image, results):
-        if results.masks is None or results.boxes is None:
-            return image
-
-        polygons = getattr(results.masks, "xy", None)
-        if polygons is None:
-            return image
-
-        classes = results.boxes.cls.tolist()
-        names = results.names
-
-        for idx, cls_id in enumerate(classes):
-            class_name = names.get(int(cls_id), str(int(cls_id)))
-            if class_name not in self.SEGMENT_TARGETS:
-                continue
-            if idx >= len(polygons):
-                continue
-
-            points = np.asarray(polygons[idx], dtype=np.int32)
-            if points.size == 0:
-                continue
-
+        for _, points in self._get_target_polygons(results):
+            points = np.asarray(points, dtype=np.int32)
             for x, y in points:
                 cv2.circle(image, (int(x), int(y)), 4, (255, 0, 255), -1)
 
         return image
 
     def _draw_target_axis(self, image, results):
-        if results.masks is None or results.boxes is None:
-            return image, ""
-
-        polygons = getattr(results.masks, "xy", None)
-        if polygons is None:
-            return image, ""
-
-        classes = results.boxes.cls.tolist()
-        names = results.names
         info_lines = []
         object_indices = {name: 1 for name in self.SEGMENT_TARGETS}
 
-        for idx, cls_id in enumerate(classes):
-            class_name = names.get(int(cls_id), str(int(cls_id)))
-            if class_name not in self.SEGMENT_TARGETS:
-                continue
-            if idx >= len(polygons):
-                continue
-
-            points = np.asarray(polygons[idx], dtype=np.float32)
-            if points.shape[0] < 2:
-                continue
-
+        for class_name, points in self._get_target_polygons(results):
             endpoint_result = self._compute_endpoints(points)
             if endpoint_result is None:
                 continue
@@ -365,28 +327,9 @@ class DetectPageWindow(QtWidgets.QMainWindow):
         ]
 
     def _extract_target_segments(self, results):
-        if results.masks is None or results.boxes is None:
-            return "未检测到 chicken 分割结果"
-
-        names = results.names
         lines = []
-        classes = results.boxes.cls.tolist()
-        polygons = getattr(results.masks, "xy", None)
-        if polygons is None:
-            return "当前结果没有可用的分割轮廓坐标"
-
         object_indices = {name: 1 for name in self.SEGMENT_TARGETS}
-        for idx, cls_id in enumerate(classes):
-            class_name = names.get(int(cls_id), str(int(cls_id)))
-            if class_name not in self.SEGMENT_TARGETS:
-                continue
-            if idx >= len(polygons):
-                continue
-
-            points = np.asarray(polygons[idx], dtype=np.float32)
-            if points.size == 0:
-                continue
-
+        for class_name, points in self._get_target_polygons(results):
             rounded_points = np.round(points).astype(int).tolist()
             object_index = object_indices[class_name]
             lines.append(f"{class_name} #{object_index}:")
@@ -398,6 +341,74 @@ class DetectPageWindow(QtWidgets.QMainWindow):
             return "未检测到 chicken 分割结果"
 
         return "\n".join(lines).strip()
+
+    def _get_target_polygons(self, results):
+        if results.masks is None or results.boxes is None:
+            return []
+
+        classes = results.boxes.cls.tolist()
+        names = results.names
+        polygons = getattr(results.masks, "xy", None)
+        mask_data = getattr(results.masks, "data", None)
+        orig_shape = getattr(results, "orig_shape", None)
+        target_polygons = []
+
+        for idx, cls_id in enumerate(classes):
+            class_name = names.get(int(cls_id), str(int(cls_id)))
+            if class_name not in self.SEGMENT_TARGETS:
+                continue
+
+            points = None
+            if mask_data is not None and idx < len(mask_data):
+                points = self._extract_largest_polygon_from_mask(
+                    mask_data[idx],
+                    orig_shape,
+                )
+
+            if points is None and polygons is not None and idx < len(polygons):
+                points = np.asarray(polygons[idx], dtype=np.float32)
+
+            if points is None or points.shape[0] < 2:
+                continue
+
+            target_polygons.append((class_name, points))
+
+        return target_polygons
+
+    def _extract_largest_polygon_from_mask(self, mask, orig_shape):
+        if hasattr(mask, "detach"):
+            mask = mask.detach().cpu().numpy()
+
+        mask = np.asarray(mask)
+        if mask.size == 0:
+            return None
+
+        binary_mask = (mask > 0.5).astype(np.uint8)
+        if binary_mask.ndim != 2:
+            return None
+
+        if orig_shape is not None:
+            target_h, target_w = int(orig_shape[0]), int(orig_shape[1])
+            if binary_mask.shape[0] != target_h or binary_mask.shape[1] != target_w:
+                binary_mask = cv2.resize(
+                    binary_mask,
+                    (target_w, target_h),
+                    interpolation=cv2.INTER_NEAREST,
+                )
+
+        contours, _ = cv2.findContours(
+            binary_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_NONE,
+        )
+        if not contours:
+            return None
+
+        largest_contour = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(largest_contour) <= 0:
+            return None
+
+        return largest_contour.reshape(-1, 2).astype(np.float32)
 
     def stop_camera(self, clear_result=True):
         if self.timer.isActive():
